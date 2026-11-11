@@ -94,7 +94,9 @@ a { color: var(--accent); }
 }
 .lang button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 
-main { max-width: 1200px; margin: 0 auto; padding: 24px; outline: none; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+/* #view only receives focus programmatically on navigation (for screen readers); no ring. */
+#view:focus, #view:focus-visible { outline: none; }
 
 h1 { font-size: 24px; margin: 0 0 4px; overflow-wrap: anywhere; }
 .intro { color: var(--muted); margin: 0 0 20px; }

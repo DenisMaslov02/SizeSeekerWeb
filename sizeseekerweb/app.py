@@ -62,6 +62,10 @@ def create_app(port: int, manager: ScanManager | None = None, index: IndexManage
             if request.headers.get(CSRF_HEADER) != "1" or (origin and origin not in allowed_origins):
                 return JSONResponse({"detail": {"code": "forbidden_origin"}}, status_code=403)
         response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            # Always revalidate (cheap via ETag), otherwise browsers keep the
+            # JavaScript of the previous version after an update.
+            response.headers["Cache-Control"] = "no-cache"
         response.headers["Content-Security-Policy"] = CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"

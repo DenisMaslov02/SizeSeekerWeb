@@ -115,7 +115,12 @@ def test_index_and_static_are_served(client):
     assert r.status_code == 200 and "SizeSeekerWeb" in r.text
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
     assert "script-src 'self'" in r.headers["content-security-policy"]
-    assert client.get("/static/app.js").status_code == 200
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    # After an update the browser must fetch the new JavaScript, not keep the old one.
+    assert js.headers["cache-control"] == "no-cache"
+    assert client.get("/static/style.css").headers["cache-control"] == "no-cache"
+    assert client.get("/", headers={"If-None-Match": "x"}).headers["cache-control"] == "no-cache"
 
 
 def test_drives(client):
