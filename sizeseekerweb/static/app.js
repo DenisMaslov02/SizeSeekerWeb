@@ -9,7 +9,8 @@ const TREEMAP_MAX = 120;
 const POLL_MS = 400;
 
 // UI state that survives navigation between folders.
-const ui = { filter: "", sort: "size-desc", tab: "contents" };
+const ui = { filter: "", sort: "size-desc", tab: "contents", query: "", searchKind: "all" };
+const SEARCH_LIMIT = 200;
 let renderToken = 0;
 
 // ------------------------------------------------------------------ helpers
@@ -175,9 +176,167 @@ async function renderDrives(token) {
     );
   });
   setView(
+    searchPanel(token),
     el("h1", {}, t("drives")),
     el("p", { class: "intro" }, t("drivesIntro")),
     drives.length ? el("ul", { class: "drives" }, cards) : message(t("noDrives")),
+  );
+}
+
+// ------------------------------------------------------------------ search
+function rootsText(roots) {
+  return (roots || []).map((r) => r.replace(/\\$/, "")).join(", ");
+}
+
+function parentOf(path) {
+  const cut = path.lastIndexOf("\\");
+  const parent = path.slice(0, cut);
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
+
+function searchPanel(token) {
+  const input = el("input", {
+    type: "search", class: "input search-input", placeholder: t("searchPlaceholder"), "aria-label": t("searchLabel"),
+    value: ui.query, autocomplete: "off", spellcheck: "false",
+  });
+  const kind = el(
+    "select",
+    { class: "input", "aria-label": t("kindAll") },
+    [["all", "kindAll"], ["dir", "kindDir"], ["file", "kindFile"]].map(([value, key]) => el("option", { value, selected: ui.searchKind === value }, t(key))),
+  );
+  const statusLine = el("div", { class: "index-line" });
+  const note = el("p", { class: "index-note", hidden: true });
+  const info = el("p", { class: "result-info", "aria-live": "polite" });
+  const results = el("ul", { class: "entries results", hidden: true });
+  let indexed = false;
+  let wasRunning = false;
+  let seq = 0;
+  let timer;
+
+  const runSearch = async () => {
+    const q = ui.query.trim();
+    const mine = ++seq;
+    if (!q) {
+      info.textContent = "";
+      results.hidden = true;
+      return;
+    }
+    if (!indexed) {
+      info.textContent = t("searchFirst");
+      results.hidden = true;
+      return;
+    }
+    try {
+      const data = await api("GET", `/api/search?q=${encodeURIComponent(q)}&kind=${ui.searchKind}&limit=${SEARCH_LIMIT}`);
+      if (mine !== seq || token !== renderToken) return;
+      info.textContent = !data.results.length
+        ? t("resultsNone")
+        : data.more ? t("resultsMore", { count: formatNumber(data.results.length) }) : t("results", { count: formatNumber(data.results.length) });
+      results.replaceChildren(...data.results.map(resultRow));
+      results.hidden = !data.results.length;
+    } catch (err) {
+      if (mine !== seq || token !== renderToken) return;
+      info.textContent = t("error", { message: err.message });
+      results.hidden = true;
+    }
+  };
+
+  const startIndex = async () => {
+    try {
+      await api("POST", "/api/index");
+    } catch (err) {
+      if (err.code !== "index_running") showToast(t("error", { message: err.message }), true);
+    }
+    refreshStatus();
+  };
+
+  const refreshStatus = async () => {
+    let s;
+    try {
+      s = await api("GET", "/api/index");
+    } catch (err) {
+      if (token === renderToken) statusLine.replaceChildren(el("span", {}, t("error", { message: err.message })));
+      return;
+    }
+    if (token !== renderToken) return;
+    const hadIndex = indexed;
+    indexed = Boolean(s.index);
+    const b = s.build;
+    note.hidden = true;
+    if (b && ["pending", "running"].includes(b.state)) {
+      wasRunning = true;
+      const elapsed = formatDuration(Date.now() / 1000 - (b.started_at ?? Date.now() / 1000));
+      statusLine.replaceChildren(
+        el("span", { class: "mini-spinner", "aria-hidden": "true" }),
+        el("span", { class: "index-text" }, t("indexRunning", { roots: rootsText(b.roots), entries: formatNumber(b.progress.entries), dirs: formatNumber(b.progress.dirs), elapsed })),
+        el("button", { class: "btn", type: "button", onclick: () => api("DELETE", "/api/index/build").catch(() => {}).then(refreshStatus) }, t("cancel")),
+      );
+      setTimeout(refreshStatus, 1000);
+    } else {
+      const text = s.index
+        ? t("indexInfo", { entries: formatNumber(s.index.entries), roots: rootsText(s.index.roots), time: formatTime(s.index.created_at) })
+        : t("indexNone", { roots: rootsText(s.roots) });
+      statusLine.replaceChildren(
+        el("span", { class: "index-text" }, text),
+        el("button", { class: s.index ? "btn" : "btn primary", type: "button", onclick: startIndex }, icon("refresh"), t(s.index ? "indexAgain" : "indexStart")),
+      );
+      const notes = [];
+      if (wasRunning && b?.state === "cancelled") notes.push(t("indexCancelled"));
+      if (wasRunning && b?.state === "error") notes.push(t("indexFailed", { message: b.error }));
+      if (s.index?.errors) notes.push(t("indexErrors", { count: formatNumber(s.index.errors) }));
+      note.textContent = notes.join(" ");
+      note.hidden = !notes.length;
+      if ((wasRunning && b?.state === "done") || indexed !== hadIndex) runSearch();
+      wasRunning = false;
+    }
+  };
+
+  input.addEventListener("input", () => {
+    ui.query = input.value;
+    clearTimeout(timer);
+    timer = setTimeout(runSearch, 150);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      clearTimeout(timer);
+      runSearch();
+    }
+  });
+  kind.addEventListener("change", () => {
+    ui.searchKind = kind.value;
+    runSearch();
+  });
+  refreshStatus();
+
+  return el(
+    "section",
+    { class: "panel search-panel", "aria-labelledby": "search-title" },
+    el("h2", { id: "search-title" }, t("searchTitle")),
+    el("div", { class: "search-row" }, input, kind),
+    el("p", { class: "hint" }, t("searchHint")),
+    statusLine,
+    note,
+    info,
+    results,
+  );
+}
+
+function resultRow(r) {
+  const dir = parentOf(r.path);
+  const name = r.kind === "dir"
+    ? el("a", { class: "result-name", href: folderHref(r.path), title: t("openInApp") }, r.name)
+    : el("span", { class: "result-name" }, r.name);
+  return el(
+    "li",
+    { class: "entry result" },
+    el(
+      "div",
+      { class: "result-main" },
+      icon(r.kind, `icon kind-${r.kind}`),
+      el("span", { class: "result-text" }, name, el("a", { class: "result-path", href: folderHref(dir), title: `${t("openInApp")}: ${dir}` }, `‎${dir}‎`)),
+      el("span", { class: "entry-size" }, formatSize(r.size)),
+    ),
+    el("button", { class: "btn icon-btn", type: "button", title: t("openExplorer"), "aria-label": `${t("openExplorer")}: ${r.name}`, onclick: () => reveal(r.path) }, icon("reveal")),
   );
 }
 
@@ -234,7 +393,7 @@ async function watchScan(path, token) {
     stats.files.textContent = formatNumber(p.files);
     stats.bytes.textContent = formatSize(p.bytes);
     stats.elapsed.textContent = formatDuration((status.finished_at ?? Date.now() / 1000) - (status.started_at ?? Date.now() / 1000));
-    current.textContent = p.current;
+    current.textContent = `\u200E${p.current}\u200E`; // keeps "C:\..." readable in the rtl ellipsis trick
     current.title = p.current;
     if (!["pending", "running"].includes(status.state)) return status;
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));

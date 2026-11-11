@@ -7,10 +7,23 @@ import shutil
 import string
 import subprocess
 import sys
+from pathlib import Path
 
 IMAGE_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".svg", ".webp", ".heic", ".ico",
 }
+
+
+def data_dir() -> Path:
+    """Per-user folder for logs and the search index (override: SIZESEEKERWEB_DATA)."""
+    override = os.environ.get("SIZESEEKERWEB_DATA")
+    if override:
+        path = Path(override)
+    else:
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+        path = Path(base) / "SizeSeekerWeb"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def list_drive_roots() -> list[str]:

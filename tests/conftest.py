@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sizeseekerweb.app import create_app
+from sizeseekerweb.indexer import IndexManager
 from sizeseekerweb.scanner import BIG_FILE_THRESHOLD, ScanManager
 
 PORT = 8765
@@ -48,8 +49,16 @@ def manager():
 
 
 @pytest.fixture
-def client(manager):
-    return TestClient(create_app(PORT, manager), base_url=BASE_URL)
+def index(tmp_path):
+    # Never the real %LOCALAPPDATA% or the real drives in tests.
+    manager = IndexManager(tmp_path / "data", roots_provider=lambda: [str(tmp_path / "root")], workers=2)
+    yield manager
+    manager.close()
+
+
+@pytest.fixture
+def client(manager, index):
+    return TestClient(create_app(PORT, manager, index), base_url=BASE_URL)
 
 
 def scan_and_wait(client, path) -> dict:

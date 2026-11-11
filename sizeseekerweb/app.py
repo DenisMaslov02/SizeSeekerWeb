@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, system
+from .indexer import IndexBusyError, IndexManager, NotIndexedError
 from .scanner import ScanBusyError, ScanManager, normalize_path, norm_key
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -39,13 +40,15 @@ def _checked_dir(path: str) -> str:
     return path
 
 
-def create_app(port: int, manager: ScanManager | None = None) -> FastAPI:
+def create_app(port: int, manager: ScanManager | None = None, index: IndexManager | None = None) -> FastAPI:
     manager = manager or ScanManager()
+    index = index or IndexManager(system.data_dir())
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     allowed_origins = {f"http://{h}" for h in allowed_hosts}
 
     app = FastAPI(title="SizeSeekerWeb", version=__version__, docs_url=None, redoc_url=None)
     app.state.manager = manager
+    app.state.index = index
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -136,6 +139,39 @@ def create_app(port: int, manager: ScanManager | None = None) -> FastAPI:
             for s, p in scan.largest_files(path, limit)
         ]
 
+    @app.get("/api/index")
+    def index_status():
+        return index.status()
+
+    @app.post("/api/index", status_code=202)
+    def start_index():
+        try:
+            index.start()
+        except IndexBusyError:
+            raise _error(409, "index_running", "Indexing is already running") from None
+        except ValueError as exc:
+            raise _error(400, "no_drives", str(exc)) from None
+        return index.status()
+
+    @app.delete("/api/index/build")
+    def cancel_index():
+        return {"cancelled": index.cancel()}
+
+    @app.get("/api/search")
+    def search(
+        q: str = Query(..., min_length=1, max_length=300),
+        kind: str = Query("all", pattern="^(all|dir|file)$"),
+        limit: int = Query(200, ge=1, le=1000),
+    ):
+        try:
+            found = index.search(q, kind, limit)
+        except NotIndexedError:
+            raise _error(409, "not_indexed", "Nothing indexed yet") from None
+        for item in found["results"]:
+            item["kind"] = "dir" if item.pop("dir") else system.file_kind(item["name"])
+        found["index"] = index.info()
+        return found
+
     @app.post("/api/reveal")
     def reveal(body: PathBody):
         try:
@@ -148,7 +184,7 @@ def create_app(port: int, manager: ScanManager | None = None) -> FastAPI:
 
     # ------------------------------------------------------------------ UI
     @app.get("/", include_in_schema=False)
-    def index():
+    def ui_page():
         return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

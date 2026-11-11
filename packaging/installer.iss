@@ -2,7 +2,7 @@
 ; Expects the PyInstaller output in dist\SizeSeekerWeb (run packaging\build.ps1).
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 
 [Setup]
@@ -46,6 +46,10 @@ Name: "{autodesktop}\SizeSeekerWeb"; Filename: "{app}\SizeSeekerWeb.exe"; Tasks:
 
 [Run]
 Filename: "{app}\SizeSeekerWeb.exe"; Description: "{cm:LaunchProgram,SizeSeekerWeb}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Logs and the search index (it lists every file name of the PC, so do not leave it behind).
+Type: filesandordirs; Name: "{localappdata}\SizeSeekerWeb"
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM SizeSeekerWeb.exe"; Flags: runhidden; RunOnceId: "StopSizeSeekerWeb"

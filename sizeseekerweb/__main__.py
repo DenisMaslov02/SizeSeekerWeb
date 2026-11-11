@@ -13,21 +13,14 @@ import threading
 import time
 import urllib.request
 import webbrowser
-from pathlib import Path
 
 from . import __version__
+from .system import data_dir
 
 DEFAULT_PORT = 38765
 HOST = "127.0.0.1"  # never reachable from the network
 
 log = logging.getLogger("sizeseekerweb")
-
-
-def data_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
-    path = Path(base) / "SizeSeekerWeb"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def setup_logging(to_console: bool) -> None:

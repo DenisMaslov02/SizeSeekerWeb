@@ -14,6 +14,9 @@ It is the web successor of [SizeSeeker](https://github.com/DenisMaslov02/sizesee
 
 ## Features
 
+- **Search everything**: index all local disks once, then find any file or folder by name in milliseconds –
+  several words (`holiday mp4`) or wildcards (`*.pdf`, `report_202?.docx`), then show it in Explorer or open
+  the folder in SizeSeekerWeb
 - **Drive overview** with free/used space for every drive
 - **Background scan** with live progress (folders, files, size, elapsed time) and cancel
 - **Instant browsing** after the scan: sizes and share of every folder and file
@@ -51,6 +54,7 @@ python -m sizeseekerweb --no-tray  # console mode, stop with Ctrl+C
 ```
 
 Options: `--port <n>` (or env `SIZESEEKERWEB_PORT`), `--no-browser`, `--no-tray`.
+Env `SIZESEEKERWEB_DATA` moves the data folder (logs, search index), e.g. for a second dev instance.
 Logs are written to `%LOCALAPPDATA%\SizeSeekerWeb\sizeseekerweb.log`.
 
 ## Build the installer
@@ -76,6 +80,12 @@ This creates `dist\SizeSeekerWeb\` (PyInstaller, no console window) and `dist\Si
 - The scan keeps **directories only** (plus every file of 1 MB or more for the "largest files" view). Files of the
   folder you are looking at are listed live. A fully scanned system drive with ~1.5 million files takes about
   20–30 seconds and ~150 MB of RAM; up to four scans are kept in memory.
+- **Search index** ("Index everything" on the start page): walks every fixed local disk with NTFS, ReFS or exFAT
+  (cloud drives such as Google Drive and network/USB drives are skipped) and streams all names into flat files
+  under `%LOCALAPPDATA%\SizeSeekerWeb\index`. Searching memory-maps those files and uses `bytes.find` on the
+  lowercased names. Measured on a PC with five disks: 5.07 million entries, built in 5.5 minutes, 381 MB on disk,
+  searches in 3–150 ms. The index is only rebuilt when you click "Re-index"; the old one stays searchable until
+  the new one is complete. Uninstalling removes it.
 - Symlinks and junctions are not followed, so nothing is counted twice.
 - Sizes are logical file sizes. Folders without read permission are skipped and reported.
 
@@ -96,6 +106,10 @@ web page you visit cannot start scans or open Explorer windows. A strict Content
 | GET | `/api/folder?path=` | entries of a folder with sizes and percentages |
 | GET | `/api/largest?path=&limit=` | largest files below a folder |
 | POST | `/api/reveal` `{"path"}` | show in Explorer |
+| GET | `/api/index` | search index info and build progress |
+| POST | `/api/index` | build the search index of all local disks |
+| DELETE | `/api/index/build` | cancel indexing |
+| GET | `/api/search?q=&kind=all\|dir\|file&limit=` | search names (words and `*`/`?` wildcards) |
 
 POST/DELETE requests need the header `X-SizeSeeker: 1`.
 

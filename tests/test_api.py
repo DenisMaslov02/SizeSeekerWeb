@@ -12,20 +12,21 @@ MB = BIG_FILE_THRESHOLD
 
 
 # ---------------------------------------------------------------- security
-def test_foreign_host_header_is_rejected(manager):
+def test_foreign_host_header_is_rejected(manager, index):
     # DNS rebinding: evil.example resolves to 127.0.0.1, but the Host header gives it away.
-    client = TestClient(create_app(PORT, manager), base_url=f"http://evil.example:{PORT}")
+    client = TestClient(create_app(PORT, manager, index), base_url=f"http://evil.example:{PORT}")
     assert client.get("/api/drives").status_code == 403
+    assert client.get("/api/search", params={"q": "x"}).status_code == 403
     assert client.get("/").status_code == 403
 
 
-def test_wrong_port_in_host_is_rejected(manager):
-    client = TestClient(create_app(PORT, manager), base_url="http://127.0.0.1:9999")
+def test_wrong_port_in_host_is_rejected(manager, index):
+    client = TestClient(create_app(PORT, manager, index), base_url="http://127.0.0.1:9999")
     assert client.get("/api/version").status_code == 403
 
 
-def test_localhost_name_is_allowed(manager):
-    client = TestClient(create_app(PORT, manager), base_url=f"http://localhost:{PORT}")
+def test_localhost_name_is_allowed(manager, index):
+    client = TestClient(create_app(PORT, manager, index), base_url=f"http://localhost:{PORT}")
     assert client.get("/api/version").json()["app"] == "SizeSeekerWeb"
 
 
@@ -39,6 +40,65 @@ def test_write_requests_from_a_foreign_origin_are_rejected(client, tree):
     headers = {**WRITE_HEADERS, "Origin": "https://evil.example"}
     assert client.post("/api/scans", json={"path": str(tree)}, headers=headers).status_code == 403
     assert client.delete("/api/scans/current", headers=headers).status_code == 403
+    assert client.post("/api/index", headers=headers).status_code == 403
+
+
+def test_indexing_needs_the_custom_header(client, tree):
+    assert client.post("/api/index").status_code == 403
+    assert client.app.state.index.build is None
+
+
+# ---------------------------------------------------------------- search
+def index_and_wait(client) -> None:
+    r = client.post("/api/index", headers=WRITE_HEADERS)
+    assert r.status_code == 202, r.text
+    client.app.state.index.wait()
+    status = client.get("/api/index").json()
+    assert status["build"]["state"] == "done", status
+
+
+def test_search_before_indexing(client, tree):
+    r = client.get("/api/search", params={"q": "huge"})
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "not_indexed"
+    assert client.get("/api/index").json()["index"] is None
+
+
+def test_index_and_search(client, tree):
+    index_and_wait(client)
+    status = client.get("/api/index").json()
+    assert status["index"]["entries"] == 10
+    assert status["roots"] == [str(tree)]
+
+    data = client.get("/api/search", params={"q": "*.iso"}).json()
+    assert data["results"] == [
+        {"path": str(tree / "docs" / "deep" / "huge.iso"), "name": "huge.iso", "size": 3 * MB, "kind": "file"}
+    ]
+    assert data["more"] is False
+    assert data["index"]["entries"] == 10
+
+    pic = client.get("/api/search", params={"q": "pic"}).json()["results"][0]
+    assert pic["kind"] == "image"
+    dirs = client.get("/api/search", params={"q": "e", "kind": "dir"}).json()["results"]
+    assert sorted(d["name"] for d in dirs) == ["deep", "empty"]
+    assert all(d["kind"] == "dir" for d in dirs)
+
+
+def test_search_validates_parameters(client, tree):
+    index_and_wait(client)
+    assert client.get("/api/search", params={"q": ""}).status_code == 422
+    assert client.get("/api/search", params={"q": "x", "kind": "evil"}).status_code == 422
+    assert client.get("/api/search", params={"q": "x", "limit": 5000}).status_code == 422
+
+
+def test_second_index_run_while_running_is_rejected(client, tree, monkeypatch):
+    from sizeseekerweb.indexer import IndexBuild
+
+    monkeypatch.setattr(IndexBuild, "run", lambda self: None)  # stays "pending"
+    assert client.post("/api/index", headers=WRITE_HEADERS).status_code == 202
+    r = client.post("/api/index", headers=WRITE_HEADERS)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "index_running"
+    assert client.delete("/api/index/build", headers=WRITE_HEADERS).json() == {"cancelled": True}
 
 
 def test_cors_preflight_is_not_granted(client):
