@@ -20,7 +20,9 @@ It is the web successor of [SizeSeeker](https://github.com/DenisMaslov02/sizesee
 - **Duplicates** found automatically after indexing: copied folders (matched by their contents, so
   "Project - Kopie" is found too) and files with the same name and size, 1 MB and up, sorted by wasted space.
   "Check contents" compares checksums per group and recognises hard links. Nothing is deleted by the app.
-- **Drive overview** with free/used space for every drive
+- **Drive overview** with free/used space for every drive, **"Scan all"** to pre-scan all local disks one
+  after another (folders then open instantly), and an option to do that automatically whenever the app starts –
+  handy for slow HDDs
 - **Background scan** with live progress (folders, files, size, elapsed time) and cancel
 - **Instant browsing** after the scan: sizes and share of every folder and file
 - **Treemap** of the current folder – click a tile to open that folder
@@ -106,6 +108,8 @@ web page you visit cannot start scans or open Explorer windows. A strict Content
 | POST | `/api/scans` `{"path"}` | start a scan |
 | GET | `/api/scans/current` | progress of the current scan |
 | DELETE | `/api/scans/current` | cancel |
+| GET / POST / DELETE | `/api/scans/all` | status / start / cancel "scan all local drives" |
+| GET / PUT | `/api/settings` | settings, e.g. `{"scan_on_start": true}` |
 | GET | `/api/folder?path=` | entries of a folder with sizes and percentages |
 | GET | `/api/largest?path=&limit=` | largest files below a folder |
 | POST | `/api/reveal` `{"path"}` | show in Explorer |

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sizeseekerweb.app import create_app
 from sizeseekerweb.indexer import IndexManager
 from sizeseekerweb.scanner import BIG_FILE_THRESHOLD, ScanManager
+from sizeseekerweb.settings import Settings
 
 PORT = 8765
 BASE_URL = f"http://127.0.0.1:{PORT}"
@@ -57,8 +58,18 @@ def index(tmp_path):
 
 
 @pytest.fixture
-def client(manager, index):
-    return TestClient(create_app(PORT, manager, index), base_url=BASE_URL)
+def settings(tmp_path):
+    return Settings(tmp_path / "data" / "settings.json")
+
+
+@pytest.fixture
+def scan_roots(tmp_path):
+    return lambda: [str(tmp_path / "root")]
+
+
+@pytest.fixture
+def client(manager, index, settings, scan_roots):
+    return TestClient(create_app(PORT, manager, index, settings, scan_roots), base_url=BASE_URL)
 
 
 def scan_and_wait(client, path) -> dict:

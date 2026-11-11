@@ -291,7 +291,8 @@ def _aggregate(root: DirNode) -> None:
 class ScanManager:
     """Runs one scan at a time and keeps finished scans for browsing."""
 
-    # A fully scanned system drive needs roughly 150-200 MB, so keep only a few.
+    # A fully scanned system drive needs roughly 150-200 MB, so keep only a few
+    # folder scans. Scans from "scan all drives" are pinned and always kept.
     MAX_KEPT = 4
 
     def __init__(self, workers: int = DEFAULT_WORKERS) -> None:
@@ -299,12 +300,17 @@ class ScanManager:
         self._lock = threading.Lock()
         self.current: Scan | None = None
         self._done: list[Scan] = []
+        self._pinned: set[int] = set()  # id() of scans that must not be evicted
+        self.batch: ScanBatch | None = None
 
-    def start(self, path: str) -> Scan:
+    def start(self, path: str, pinned: bool = False) -> Scan:
         with self._lock:
             if self.current is not None and not self.current.finished:
                 raise ScanBusyError(self.current.root_path)
+            self._collect()  # keep the previous result before it is replaced
             scan = Scan(path, self.workers)
+            if pinned:
+                self._pinned.add(id(scan))
             self.current = scan
         scan.start()
         return scan
@@ -323,7 +329,32 @@ class ScanManager:
             # Older scans that lie completely inside the new one are outdated.
             self._done = [s for s in self._done if not scan.covers(s.root_path)]
             self._done.append(scan)
-            del self._done[: -self.MAX_KEPT]
+            unpinned = [s for s in self._done if id(s) not in self._pinned]
+            for old in unpinned[: -self.MAX_KEPT]:
+                self._done.remove(old)
+            self._pinned &= {id(s) for s in self._done} | {id(scan)}
+
+    def scanned_roots(self) -> list[str]:
+        with self._lock:
+            self._collect()
+            return [s.root_path for s in self._done]
+
+    # -- "scan all drives"
+    def start_batch(self, roots: list[str]) -> "ScanBatch":
+        with self._lock:
+            if self.batch is not None and not self.batch.finished:
+                raise ScanBusyError("all drives")
+            batch = ScanBatch(self, roots)
+            self.batch = batch
+        threading.Thread(target=batch.run, name="sizeseeker-scan-all", daemon=True).start()
+        return batch
+
+    def cancel_batch(self) -> bool:
+        batch = self.batch
+        if batch is None or batch.finished:
+            return False
+        batch.cancel()
+        return True
 
     def scan_for(self, path: str) -> Scan | None:
         """Most recently finished scan that contains ``path``."""
@@ -333,6 +364,62 @@ class ScanManager:
         # _done is in completion order (scans run one at a time). Timestamps are
         # not used: on Windows two scans can finish within the same clock tick.
         return candidates[-1] if candidates else None
+
+
+class ScanBatch:
+    """Scans several roots one after another (one scan at a time, like everything else)."""
+
+    def __init__(self, manager: ScanManager, roots: list[str]) -> None:
+        self.manager = manager
+        self.roots = [normalize_path(r) for r in roots]
+        self.position = 0  # index of the root being scanned
+        self.state = "pending"  # pending | running | done | cancelled
+        self.failed: list[str] = []
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self._cancel = threading.Event()
+
+    @property
+    def finished(self) -> bool:
+        return self.state in ("done", "cancelled")
+
+    def cancel(self) -> None:
+        self._cancel.set()
+        self.manager.cancel()
+
+    def run(self) -> None:
+        self.state = "running"
+        self.started_at = time.time()
+        for position, root in enumerate(self.roots):
+            self.position = position
+            scan = None
+            while scan is None and not self._cancel.is_set():
+                try:
+                    scan = self.manager.start(root, pinned=True)
+                except ScanBusyError:  # e.g. a folder the user opened meanwhile: wait for it
+                    current = self.manager.current
+                    if current is not None:
+                        current.wait(0.5)
+            if scan is None:
+                break
+            scan.wait()
+            if scan.state == "error":
+                self.failed.append(root)
+        self.manager.scanned_roots()  # collect the last result
+        self.state = "cancelled" if self._cancel.is_set() else "done"
+        self.finished_at = time.time()
+
+    def status(self) -> dict:
+        current = self.manager.current
+        return {
+            "state": self.state,
+            "roots": self.roots,
+            "position": self.position,
+            "failed": self.failed,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "current": current.status() if current is not None and not self.finished else None,
+        }
 
 
 class ScanBusyError(RuntimeError):

@@ -88,11 +88,10 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    from .app import create_app
+    from .app import create_app, scan_on_start
 
-    config = uvicorn.Config(
-        create_app(args.port), host=HOST, port=args.port, log_config=None, access_log=False, lifespan="off"
-    )
+    app = create_app(args.port)
+    config = uvicorn.Config(app, host=HOST, port=args.port, log_config=None, access_log=False, lifespan="off")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, name="sizeseeker-server", daemon=True)
     thread.start()
@@ -104,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         show_error("SizeSeekerWeb could not start the local server. See sizeseekerweb.log for details.")
         return 1
     log.info("SizeSeekerWeb %s listening on %s", __version__, url)
+    if scan_on_start(app):
+        log.info("scanning all drives on start")
 
     if not args.no_browser:
         webbrowser.open(url)

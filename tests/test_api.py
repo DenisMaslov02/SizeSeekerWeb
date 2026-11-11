@@ -12,21 +12,21 @@ MB = BIG_FILE_THRESHOLD
 
 
 # ---------------------------------------------------------------- security
-def test_foreign_host_header_is_rejected(manager, index):
+def test_foreign_host_header_is_rejected(manager, index, settings, scan_roots):
     # DNS rebinding: evil.example resolves to 127.0.0.1, but the Host header gives it away.
-    client = TestClient(create_app(PORT, manager, index), base_url=f"http://evil.example:{PORT}")
+    client = TestClient(create_app(PORT, manager, index, settings, scan_roots), base_url=f"http://evil.example:{PORT}")
     assert client.get("/api/drives").status_code == 403
     assert client.get("/api/search", params={"q": "x"}).status_code == 403
     assert client.get("/").status_code == 403
 
 
-def test_wrong_port_in_host_is_rejected(manager, index):
-    client = TestClient(create_app(PORT, manager, index), base_url="http://127.0.0.1:9999")
+def test_wrong_port_in_host_is_rejected(manager, index, settings, scan_roots):
+    client = TestClient(create_app(PORT, manager, index, settings, scan_roots), base_url="http://127.0.0.1:9999")
     assert client.get("/api/version").status_code == 403
 
 
-def test_localhost_name_is_allowed(manager, index):
-    client = TestClient(create_app(PORT, manager, index), base_url=f"http://localhost:{PORT}")
+def test_localhost_name_is_allowed(manager, index, settings, scan_roots):
+    client = TestClient(create_app(PORT, manager, index, settings, scan_roots), base_url=f"http://localhost:{PORT}")
     assert client.get("/api/version").json()["app"] == "SizeSeekerWeb"
 
 
@@ -151,6 +151,15 @@ def test_index_and_static_are_served(client):
     assert js.headers["cache-control"] == "no-cache"
     assert client.get("/static/style.css").headers["cache-control"] == "no-cache"
     assert client.get("/", headers={"If-None-Match": "x"}).headers["cache-control"] == "no-cache"
+
+
+def test_hidden_elements_stay_hidden():
+    # Status lines use display:flex, which beats the hidden attribute without this rule
+    # (an empty box showed up on the start page).
+    from sizeseekerweb.app import STATIC_DIR
+
+    css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    assert "[hidden] { display: none !important; }" in css
 
 
 def test_drives(client):

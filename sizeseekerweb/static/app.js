@@ -160,8 +160,11 @@ async function renderDrives(token) {
     return;
   }
   if (token !== renderToken) return;
+  const badges = new Map();
   const cards = drives.map((d) => {
     const percent = d.total ? (d.used * 100) / d.total : 0;
+    const badge = el("span", { class: "scanned-badge", hidden: true }, t("scannedBadge"));
+    badges.set(d.path.toLowerCase(), badge);
     return el(
       "li",
       {},
@@ -172,14 +175,99 @@ async function renderDrives(token) {
         el("span", { class: "drive-name" }, d.path.replace(/\\$/, ""), d.label ? el("small", {}, d.label) : null),
         bar(percent, t("used", { percent: formatPercent(percent) })),
         el("span", { class: "drive-meta" }, t("free", { free: formatSize(d.free), total: formatSize(d.total) }), el("span", {}, t("used", { percent: formatPercent(percent) }))),
+        badge,
       ),
     );
   });
+  const markScanned = (roots) => {
+    const done = new Set(roots.map((r) => r.toLowerCase()));
+    for (const [path, badge] of badges) badge.hidden = !done.has(path);
+  };
   setView(
     searchPanel(token),
-    el("h1", {}, t("drives")),
-    el("p", { class: "intro" }, t("drivesIntro")),
+    drivesHeader(token, markScanned),
     drives.length ? el("ul", { class: "drives" }, cards) : message(t("noDrives")),
+  );
+}
+
+function drivesHeader(token, markScanned) {
+  const button = el("button", { class: "btn primary", type: "button" }, icon("refresh"), t("scanAll"));
+  const toggle = el("input", { type: "checkbox", id: "scan-on-start" });
+  const status = el("div", { class: "index-line", hidden: true });
+  const hint = el("p", { class: "intro" }, t("drivesIntro"));
+  let wasRunning = false;
+
+  const refresh = async () => {
+    let s;
+    try {
+      s = await api("GET", "/api/scans/all");
+    } catch {
+      return;
+    }
+    if (token !== renderToken) return;
+    markScanned(s.scanned);
+    const b = s.batch;
+    const running = b && ["pending", "running"].includes(b.state);
+    button.disabled = Boolean(running);
+    if (running) {
+      wasRunning = true;
+      const p = b.current?.progress;
+      const elapsed = formatDuration(Date.now() / 1000 - (b.started_at ?? Date.now() / 1000));
+      status.hidden = false;
+      status.replaceChildren(
+        el("span", { class: "mini-spinner", "aria-hidden": "true" }),
+        el("span", { class: "index-text" }, t("scanAllRunning", {
+          drive: rootsText([b.roots[b.position]]), pos: b.position + 1, total: b.roots.length,
+          dirs: formatNumber(p?.dirs ?? 0), size: formatSize(p?.bytes ?? 0), elapsed,
+        })),
+        el("button", { class: "btn", type: "button", onclick: () => api("DELETE", "/api/scans/all").catch(() => {}).then(refresh) }, t("cancel")),
+      );
+      setTimeout(refresh, 1000);
+      return;
+    }
+    hint.textContent = t("scanAllHint", { drives: rootsText(s.roots) });
+    if (wasRunning && b) {
+      const text = b.state === "cancelled" ? t("scanAllCancelled") : t("scanAllDone", { drives: rootsText(b.roots) });
+      status.hidden = false;
+      status.replaceChildren(el("span", { class: "index-text" }, text, b.failed.length ? ` ${t("scanAllFailed", { drives: rootsText(b.failed) })}` : ""));
+    } else {
+      status.hidden = true;
+    }
+    wasRunning = false;
+  };
+
+  button.addEventListener("click", async () => {
+    try {
+      await api("POST", "/api/scans/all");
+    } catch (err) {
+      if (err.code !== "scan_running") showToast(t("error", { message: err.message }), true);
+    }
+    refresh();
+  });
+  toggle.addEventListener("change", async () => {
+    try {
+      await api("PUT", "/api/settings", { scan_on_start: toggle.checked });
+      showToast(t("settingSaved"));
+    } catch (err) {
+      toggle.checked = !toggle.checked;
+      showToast(t("error", { message: err.message }), true);
+    }
+  });
+  api("GET", "/api/settings").then((s) => {
+    if (token === renderToken) toggle.checked = s.scan_on_start;
+  }).catch(() => {});
+  refresh();
+
+  return el(
+    "section",
+    { class: "drives-head" },
+    el("div", { class: "drives-title" },
+      el("h1", {}, t("drives")),
+      el("div", { class: "drives-actions" },
+        el("label", { class: "switch", for: "scan-on-start" }, toggle, el("span", {}, t("scanOnStart"))),
+        button)),
+    hint,
+    status,
   );
 }
 

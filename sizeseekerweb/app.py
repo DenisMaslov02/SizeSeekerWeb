@@ -8,11 +8,12 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
 from . import __version__, system
 from .duplicates import VerifyBusyError
-from .indexer import IndexBusyError, IndexManager, NotIndexedError
+from .indexer import IndexBusyError, IndexManager, NotIndexedError, local_drive_roots
+from .settings import Settings
 from .scanner import ScanBusyError, ScanManager, normalize_path, norm_key
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -41,15 +42,24 @@ def _checked_dir(path: str) -> str:
     return path
 
 
-def create_app(port: int, manager: ScanManager | None = None, index: IndexManager | None = None) -> FastAPI:
+class SettingsBody(BaseModel):
+    scan_on_start: StrictBool  # no "yes"/"1" -> True coercion
+
+
+def create_app(port: int, manager: ScanManager | None = None, index: IndexManager | None = None,
+               settings: Settings | None = None, scan_roots=None) -> FastAPI:
     manager = manager or ScanManager()
     index = index or IndexManager(system.data_dir())
+    settings = settings or Settings(system.data_dir() / "settings.json")
+    scan_roots = scan_roots or local_drive_roots  # "scan all": the same disks as the search index
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     allowed_origins = {f"http://{h}" for h in allowed_hosts}
 
     app = FastAPI(title="SizeSeekerWeb", version=__version__, docs_url=None, redoc_url=None)
     app.state.manager = manager
     app.state.index = index
+    app.state.settings = settings
+    app.state.scan_roots = scan_roots
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -99,6 +109,35 @@ def create_app(port: int, manager: ScanManager | None = None, index: IndexManage
     @app.delete("/api/scans/current")
     def cancel_scan():
         return {"cancelled": manager.cancel()}
+
+    @app.get("/api/scans/all")
+    def scan_all_status():
+        batch = manager.batch
+        return {"batch": batch.status() if batch else None, "scanned": manager.scanned_roots(),
+                "roots": scan_roots()}
+
+    @app.post("/api/scans/all", status_code=202)
+    def scan_all():
+        roots = scan_roots()
+        if not roots:
+            raise _error(400, "no_drives", "No local drives found")
+        try:
+            manager.start_batch(roots)
+        except ScanBusyError:
+            raise _error(409, "scan_running", "All drives are already being scanned") from None
+        return scan_all_status()
+
+    @app.delete("/api/scans/all")
+    def cancel_scan_all():
+        return {"cancelled": manager.cancel_batch()}
+
+    @app.get("/api/settings")
+    def get_settings():
+        return settings.as_dict()
+
+    @app.put("/api/settings")
+    def put_settings(body: SettingsBody):
+        return settings.update(scan_on_start=body.scan_on_start)
 
     @app.get("/api/folder")
     def folder(path: str = Query(...)):
@@ -221,6 +260,20 @@ def create_app(port: int, manager: ScanManager | None = None, index: IndexManage
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
+
+
+def scan_on_start(app: FastAPI) -> bool:
+    """Start "scan all drives" if the user switched that on. True if started."""
+    if not app.state.settings.get("scan_on_start"):
+        return False
+    roots = app.state.scan_roots()
+    if not roots:
+        return False
+    try:
+        app.state.manager.start_batch(roots)
+    except ScanBusyError:
+        return False
+    return True
 
 
 def _entry(entry: os.DirEntry, node) -> dict:
