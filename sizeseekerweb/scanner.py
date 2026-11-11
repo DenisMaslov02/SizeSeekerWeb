@@ -330,9 +330,9 @@ class ScanManager:
         with self._lock:
             self._collect()
             candidates = [s for s in self._done if s.covers(path) and s.find(path) is not None]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda s: s.finished_at or 0)
+        # _done is in completion order (scans run one at a time). Timestamps are
+        # not used: on Windows two scans can finish within the same clock tick.
+        return candidates[-1] if candidates else None
 
 
 class ScanBusyError(RuntimeError):

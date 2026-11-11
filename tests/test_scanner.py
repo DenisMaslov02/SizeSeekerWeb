@@ -117,6 +117,18 @@ def test_manager_prefers_the_newest_covering_scan(tree):
     assert manager.scan_for(str(tree)) is first  # the sub-scan does not cover the root
 
 
+def test_newer_scan_wins_even_with_the_same_finish_time(tree):
+    # Windows clocks can tick in ~15 ms steps, so two scans may share a timestamp.
+    manager = ScanManager(workers=2)
+    first = manager.start(str(tree))
+    first.wait(30)
+    manager.scan_for(str(tree))
+    second = manager.start(str(tree / "docs"))
+    second.wait(30)
+    second.finished_at = first.finished_at
+    assert manager.scan_for(str(tree / "docs")) is second
+
+
 def test_manager_drops_scans_inside_a_newer_scan(tree):
     manager = ScanManager(workers=2)
     inner = manager.start(str(tree / "docs"))
