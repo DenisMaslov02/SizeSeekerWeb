@@ -1,15 +1,15 @@
 VSVersionInfo(
-  ffi=FixedFileInfo(filevers=(1, 1, 2, 0), prodvers=(1, 1, 2, 0)),
+  ffi=FixedFileInfo(filevers=(1, 2, 0, 0), prodvers=(1, 2, 0, 0)),
   kids=[
     StringFileInfo([
       StringTable('040904B0', [
         StringStruct('CompanyName', 'Denis Maslov'),
         StringStruct('FileDescription', 'SizeSeekerWeb - disk usage analyzer'),
-        StringStruct('FileVersion', '1.1.2'),
+        StringStruct('FileVersion', '1.2.0'),
         StringStruct('InternalName', 'SizeSeekerWeb'),
         StringStruct('OriginalFilename', 'SizeSeekerWeb.exe'),
         StringStruct('ProductName', 'SizeSeekerWeb'),
-        StringStruct('ProductVersion', '1.1.2'),
+        StringStruct('ProductVersion', '1.2.0'),
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])

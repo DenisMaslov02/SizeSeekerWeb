@@ -17,6 +17,9 @@ It is the web successor of [SizeSeeker](https://github.com/DenisMaslov02/sizesee
 - **Search everything**: index all local disks once, then find any file or folder by name in milliseconds –
   several words (`holiday mp4`) or wildcards (`*.pdf`, `report_202?.docx`), then show it in Explorer or open
   the folder in SizeSeekerWeb
+- **Duplicates** found automatically after indexing: copied folders (matched by their contents, so
+  "Project - Kopie" is found too) and files with the same name and size, 1 MB and up, sorted by wasted space.
+  "Check contents" compares checksums per group and recognises hard links. Nothing is deleted by the app.
 - **Drive overview** with free/used space for every drive
 - **Background scan** with live progress (folders, files, size, elapsed time) and cancel
 - **Instant browsing** after the scan: sizes and share of every folder and file
@@ -110,6 +113,9 @@ web page you visit cannot start scans or open Explorer windows. A strict Content
 | POST | `/api/index` | build the search index of all local disks |
 | DELETE | `/api/index/build` | cancel indexing |
 | GET | `/api/search?q=&kind=all\|dir\|file&limit=` | search names (words and `*`/`?` wildcards) |
+| GET | `/api/duplicates?kind=&q=&offset=&limit=` | duplicate groups of the current index |
+| POST | `/api/duplicates/{id}/verify` | compare the contents of one group |
+| GET / DELETE | `/api/duplicates/verify` | progress / cancel of the running check |
 
 POST/DELETE requests need the header `X-SizeSeeker: 1`.
 

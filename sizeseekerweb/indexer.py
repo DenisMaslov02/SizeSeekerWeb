@@ -40,6 +40,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 
+from .duplicates import DuplicateStore
 from .scanner import DEFAULT_WORKERS
 
 log = logging.getLogger(__name__)
@@ -393,6 +394,7 @@ class IndexManager:
         self._lock = threading.RLock()
         self.build: IndexBuild | None = None
         self.reader: IndexReader | None = None
+        self.duplicates = DuplicateStore()
         self._open_current()
 
     @property
@@ -406,6 +408,8 @@ class IndexManager:
             except Exception:  # noqa: BLE001 - broken/old index: behave as if none
                 log.exception("could not open index")
                 self.reader = None
+        if self.reader is not None:
+            self.duplicates.attach(self.reader)  # loads saved results or analyses in the background
 
     def start(self) -> IndexBuild:
         with self._lock:
@@ -425,6 +429,7 @@ class IndexManager:
             shutil.rmtree(build.target, ignore_errors=True)
             return
         with self._lock:
+            self.duplicates.detach()  # stops an analysis that still reads the old index
             if self.reader is not None:
                 self.reader.close()  # Windows cannot replace mapped files
                 self.reader = None
@@ -484,6 +489,7 @@ class IndexManager:
 
     def close(self) -> None:
         with self._lock:
+            self.duplicates.detach()
             if self.reader is not None:
                 self.reader.close()
                 self.reader = None

@@ -285,6 +285,40 @@ a.result-name:hover { text-decoration: underline; color: var(--accent); }
 }
 .result-path:hover { color: var(--accent); text-decoration: underline; }
 
+/* ---------------------------------------------------------------- duplicates */
+.dup-line {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; padding: 10px 12px; border-radius: 8px; font-size: 14px; background: var(--surface-2);
+}
+.dup-line span:not(.mini-spinner) { flex: 1; min-width: 200px; }
+.dup-line.found { background: var(--warn-bg); color: var(--warn-text); }
+/* minmax(0, 1fr): long paths must shorten with "…", not widen the page */
+.dup-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.dup-group {
+  min-width: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; box-shadow: var(--shadow);
+}
+.dup-head { display: flex; align-items: center; gap: 12px; }
+.dup-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dup-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dup-title small { color: var(--muted); }
+.dup-wasted { font-weight: 600; color: var(--high); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dup-members { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 4px; grid-template-columns: minmax(0, 1fr); }
+.dup-member { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dup-member .result-path { flex: 1; font-size: 13px; }
+.mark { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); white-space: nowrap; }
+.mark.good { color: var(--low); }
+.mark.bad { color: var(--high); }
+.verdict { margin: 8px 0 0; font-size: 13px; }
+.verdict.identical { color: var(--low); }
+.verdict.partial, .verdict.missing { color: var(--warn-text); }
+.verdict.different { color: var(--high); }
+.dup-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dup-actions .bar { flex: 1; min-width: 120px; }
+.dup-progress { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.actions.more { justify-content: center; margin-top: 16px; }
+
 /* ---------------------------------------------------------------- small screens */
 @media (max-width: 700px) {
   .topbar { padding: 10px 16px; flex-wrap: wrap; }

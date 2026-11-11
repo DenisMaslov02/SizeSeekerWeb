@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, system
+from .duplicates import VerifyBusyError
 from .indexer import IndexBusyError, IndexManager, NotIndexedError
 from .scanner import ScanBusyError, ScanManager, normalize_path, norm_key
 
@@ -175,6 +176,33 @@ def create_app(port: int, manager: ScanManager | None = None, index: IndexManage
             item["kind"] = "dir" if item.pop("dir") else system.file_kind(item["name"])
         found["index"] = index.info()
         return found
+
+    @app.get("/api/duplicates")
+    def duplicates(
+        kind: str = Query("all", pattern="^(all|dir|file)$"),
+        q: str = Query("", max_length=300),
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=500),
+    ):
+        return index.duplicates.groups(kind, q, offset, limit)
+
+    @app.post("/api/duplicates/{group_id}/verify", status_code=202)
+    def verify_duplicates(group_id: int):
+        try:
+            job = index.duplicates.verify(group_id)
+        except VerifyBusyError:
+            raise _error(409, "verify_running", "Another check is running") from None
+        except KeyError:
+            raise _error(404, "not_found", "Unknown duplicate group") from None
+        return job.status()
+
+    @app.get("/api/duplicates/verify")
+    def verify_status():
+        return index.duplicates.verification_status()
+
+    @app.delete("/api/duplicates/verify")
+    def cancel_verify():
+        return {"cancelled": index.duplicates.cancel_verification()}
 
     @app.post("/api/reveal")
     def reveal(body: PathBody):

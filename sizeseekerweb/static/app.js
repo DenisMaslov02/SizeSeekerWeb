@@ -9,7 +9,7 @@ const TREEMAP_MAX = 120;
 const POLL_MS = 400;
 
 // UI state that survives navigation between folders.
-const ui = { filter: "", sort: "size-desc", tab: "contents", query: "", searchKind: "all" };
+const ui = { filter: "", sort: "size-desc", tab: "contents", query: "", searchKind: "all", dupQuery: "", dupKind: "all" };
 const SEARCH_LIMIT = 200;
 let renderToken = 0;
 
@@ -206,6 +206,34 @@ function searchPanel(token) {
   );
   const statusLine = el("div", { class: "index-line" });
   const note = el("p", { class: "index-note", hidden: true });
+  const dupLine = el("div", { class: "dup-line", hidden: true });
+
+  const refreshDuplicates = async () => {
+    let d;
+    try {
+      d = await api("GET", "/api/duplicates?limit=1");
+    } catch {
+      return;
+    }
+    if (token !== renderToken) return;
+    dupLine.hidden = d.state === "none";
+    if (d.state === "analyzing") {
+      dupLine.className = "dup-line";
+      dupLine.replaceChildren(el("span", { class: "mini-spinner", "aria-hidden": "true" }), el("span", {}, t("dupAnalyzing", { percent: formatPercent(d.progress * 100) })));
+      setTimeout(refreshDuplicates, 1500);
+    } else if (d.state === "ready") {
+      dupLine.className = d.total_groups ? "dup-line found" : "dup-line";
+      dupLine.replaceChildren(
+        el("span", {}, d.total_groups
+          ? t("dupFound", { wasted: formatSize(d.total_wasted), groups: formatNumber(d.total_groups) })
+          : t("dupNone", { min: formatSize(d.min_size) })),
+        d.total_groups ? el("a", { class: "btn", href: "#/duplicates" }, t("dupShow")) : null,
+      );
+    } else if (d.state === "error") {
+      dupLine.className = "dup-line";
+      dupLine.replaceChildren(el("span", {}, t("error", { message: d.error })));
+    }
+  };
   const info = el("p", { class: "result-info", "aria-live": "polite" });
   const results = el("ul", { class: "entries results", hidden: true });
   let indexed = false;
@@ -288,6 +316,7 @@ function searchPanel(token) {
       note.hidden = !notes.length;
       if ((wasRunning && b?.state === "done") || indexed !== hadIndex) runSearch();
       wasRunning = false;
+      if (indexed) refreshDuplicates();
     }
   };
 
@@ -316,8 +345,182 @@ function searchPanel(token) {
     el("p", { class: "hint" }, t("searchHint")),
     statusLine,
     note,
+    dupLine,
     info,
     results,
+  );
+}
+
+// ------------------------------------------------------------------ duplicates
+const DUP_PAGE = 50;
+
+async function renderDuplicates(token) {
+  crumbs.replaceChildren(el("a", { href: "#/" }, t("drives")), el("span", { class: "sep", "aria-hidden": "true" }, "›"), el("span", { "aria-current": "page" }, t("dupTitle")));
+  document.title = `${t("dupTitle")} – SizeSeekerWeb`;
+  const meta = el("p", { class: "meta" });
+  const intro = el("p", { class: "intro" });
+  const filter = el("input", { type: "search", class: "input", placeholder: t("dupFilter"), "aria-label": t("dupFilter"), value: ui.dupQuery ?? "" });
+  const kind = el(
+    "select",
+    { class: "input", "aria-label": t("dupKindAll") },
+    [["all", "dupKindAll"], ["dir", "dupKindDir"], ["file", "dupKindFile"]].map(([value, key]) => el("option", { value, selected: (ui.dupKind ?? "all") === value }, t(key))),
+  );
+  const count = el("span", { class: "count" });
+  const truncated = el("p", { class: "index-note", hidden: true });
+  const list = el("ul", { class: "dup-list" });
+  const more = el("button", { class: "btn", type: "button", hidden: true }, t("dupMore"));
+  let loaded = 0;
+  let timer;
+
+  const load = async (reset, keep = DUP_PAGE) => {
+    const offset = reset ? 0 : loaded;
+    const limit = reset ? Math.max(DUP_PAGE, keep) : DUP_PAGE;
+    let d;
+    try {
+      d = await api("GET", `/api/duplicates?kind=${ui.dupKind ?? "all"}&q=${encodeURIComponent(ui.dupQuery ?? "")}&offset=${offset}&limit=${limit}`);
+    } catch (err) {
+      if (token === renderToken) setView(message(t("error", { message: err.message })));
+      return;
+    }
+    if (token !== renderToken) return;
+    if (d.state !== "ready") {
+      if (d.state === "analyzing") {
+        intro.textContent = t("dupAnalyzing", { percent: formatPercent(d.progress * 100) });
+        setTimeout(() => load(true), 1500);
+      } else {
+        intro.textContent = d.state === "error" ? t("error", { message: d.error }) : t("dupNoIndex");
+      }
+      return;
+    }
+    intro.textContent = t("dupIntro", { min: formatSize(d.min_size) });
+    meta.textContent = t("dupFound", { wasted: formatSize(d.total_wasted), groups: formatNumber(d.total_groups) });
+    truncated.hidden = !d.truncated;
+    truncated.textContent = t("dupTruncated", { count: formatNumber(5000) });
+    count.textContent = t("dupMatching", { count: formatNumber(d.matching) });
+    const cards = d.groups.map((g) => dupCard(g, () => watchVerification(g.id)));
+    if (reset) list.replaceChildren(...cards);
+    else list.append(...cards);
+    loaded = offset + d.groups.length;
+    if (!d.matching) list.replaceChildren(el("li", { class: "empty" }, t("dupNoMatch")));
+    more.hidden = loaded >= d.matching;
+  };
+
+  const watchVerification = async (groupId) => {
+    const card = list.querySelector(`[data-group="${groupId}"]`);
+    const box = card?.querySelector(".dup-actions");
+    for (;;) {
+      if (token !== renderToken) return;
+      let s;
+      try {
+        s = await api("GET", "/api/duplicates/verify");
+      } catch {
+        return;
+      }
+      if (!s || s.group !== groupId) return;
+      if (["pending", "running"].includes(s.state)) {
+        const percent = s.bytes_total ? (s.bytes_done * 100) / s.bytes_total : 0;
+        box?.replaceChildren(
+          bar(percent, t("dupVerifying", { done: formatSize(s.bytes_done), total: formatSize(s.bytes_total) }), true),
+          el("span", { class: "dup-progress" }, t("dupVerifying", { done: formatSize(s.bytes_done), total: formatSize(s.bytes_total) })),
+          el("button", { class: "btn", type: "button", onclick: () => api("DELETE", "/api/duplicates/verify").catch(() => {}) }, t("cancel")),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      if (s.state === "error") showToast(t("verFailed", { message: s.error }), true);
+      if (s.state === "cancelled") showToast(t("verCancelled"));
+      await load(true, loaded);
+      return;
+    }
+  };
+
+  filter.addEventListener("input", () => {
+    ui.dupQuery = filter.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => load(true), 200);
+  });
+  kind.addEventListener("change", () => {
+    ui.dupKind = kind.value;
+    load(true);
+  });
+  more.addEventListener("click", () => load(false));
+
+  setView(
+    el("section", { class: "folder-head" },
+      el("a", { class: "btn icon-btn", href: "#/", title: t("backToDrives"), "aria-label": t("backToDrives") }, icon("up")),
+      el("div", { class: "folder-title" }, el("h1", {}, t("dupTitle")), meta)),
+    intro,
+    truncated,
+    el("div", { class: "toolbar" }, filter, kind, count),
+    list,
+    el("div", { class: "actions more" }, more),
+  );
+  await load(true);
+  // A check that is still running (e.g. after reloading the page) keeps its progress display.
+  const running = await api("GET", "/api/duplicates/verify").catch(() => null);
+  if (running && ["pending", "running"].includes(running.state)) watchVerification(running.group);
+}
+
+function dupCard(g, onVerify) {
+  const v = g.verified;
+  const clusterOf = new Map();
+  let letter = 0;
+  for (const cluster of v?.clusters ?? []) {
+    const label = cluster.length > 1 ? String.fromCharCode(65 + letter++) : null;
+    for (const path of cluster) clusterOf.set(path, label);
+  }
+  const multipleClusters = letter > 1;
+  const memberRow = (path) => {
+    let mark = null;
+    if (v) {
+      if (v.missing.includes(path)) mark = el("span", { class: "mark bad" }, t("verGone"));
+      else if ((v.unreadable ?? []).includes(path)) mark = el("span", { class: "mark", title: t("verUnreadable") }, t("verLocked"));
+      else if (clusterOf.get(path)) mark = el("span", { class: "mark good" }, multipleClusters ? `= ${clusterOf.get(path)}` : "✓");
+      else mark = el("span", { class: "mark bad" }, t("verOther"));
+    }
+    const target = g.kind === "dir" ? path : parentOf(path);
+    return el(
+      "li",
+      { class: "dup-member" },
+      el("a", { class: "result-path", href: folderHref(target), title: `${t("openInApp")}: ${target}` }, `‎${path}‎`),
+      v?.hardlinked.includes(path) ? el("span", { class: "mark", title: t("verHardlink") }, "🔗") : null,
+      mark,
+      el("button", { class: "btn icon-btn", type: "button", title: t("openExplorer"), "aria-label": `${t("openExplorer")}: ${path}`, onclick: () => reveal(path) }, icon("reveal")),
+    );
+  };
+  const verdict = v
+    ? el("p", { class: `verdict ${v.state}` },
+        t({ identical: "verIdentical", partial: "verPartial", different: "verDifferent", missing: "verMissing", unreadable: "verUnreadable" }[v.state]),
+        v.hardlinked.length ? ` · ${t("verHardlink")}` : "",
+        ` · ${formatTime(v.verified_at)}`)
+    : null;
+  return el(
+    "li",
+    { class: "dup-group", "data-group": String(g.id) },
+    el(
+      "div",
+      { class: "dup-head" },
+      icon(g.kind === "dir" ? "dir" : "file", `icon kind-${g.kind === "dir" ? "dir" : "file"}`),
+      el("div", { class: "dup-title" },
+        el("strong", {}, g.name),
+        el("small", {}, g.kind === "dir"
+          ? t("dupGroupDir", { entries: formatNumber(g.entries), size: formatSize(g.size) })
+          : t("dupGroupFile", { size: formatSize(g.size) }),
+          ` · ${t("dupCopies", { count: g.members.length })}`)),
+      el("span", { class: "dup-wasted" }, t("dupWasted", { wasted: formatSize(g.wasted) })),
+    ),
+    verdict,
+    el("ul", { class: "dup-members" }, g.members.map(memberRow)),
+    el("div", { class: "dup-actions" },
+      el("button", { class: "btn", type: "button", onclick: async () => {
+        try {
+          await api("POST", `/api/duplicates/${g.id}/verify`);
+        } catch (err) {
+          showToast(t("error", { message: err.message }), true);
+          return;
+        }
+        onVerify();
+      } }, t("dupVerify"))),
   );
 }
 
@@ -639,6 +842,8 @@ function route() {
       return;
     }
     renderFolder(path, token);
+  } else if (hash === "#/duplicates") {
+    renderDuplicates(token);
   } else {
     renderDrives(token);
   }

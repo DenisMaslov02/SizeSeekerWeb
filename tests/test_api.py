@@ -84,6 +84,36 @@ def test_index_and_search(client, tree):
     assert all(d["kind"] == "dir" for d in dirs)
 
 
+def test_duplicates_api(client, tree):
+    assert client.get("/api/duplicates").json()["state"] == "none"  # nothing indexed yet
+    (tree / "copy").mkdir()
+    (tree / "copy" / "big.bin").write_bytes((tree / "docs" / "big.bin").read_bytes())
+    index_and_wait(client)
+    client.app.state.index.duplicates.wait()
+
+    data = client.get("/api/duplicates").json()
+    assert data["state"] == "ready" and data["total_groups"] == 1
+    [group] = data["groups"]
+    assert group["kind"] == "file" and group["name"] == "big.bin"
+    assert group["members"] == [str(tree / "copy" / "big.bin"), str(tree / "docs" / "big.bin")]
+    assert group["verified"] is None
+    assert client.get("/api/duplicates", params={"kind": "dir"}).json()["groups"] == []
+
+    assert client.post(f"/api/duplicates/{group['id']}/verify").status_code == 403  # needs the header
+    assert client.post("/api/duplicates/99/verify", headers=WRITE_HEADERS).status_code == 404
+    r = client.post(f"/api/duplicates/{group['id']}/verify", headers=WRITE_HEADERS)
+    assert r.status_code == 202
+    client.app.state.index.duplicates.wait_verification()
+    assert client.get("/api/duplicates/verify").json()["state"] == "done"
+    assert client.get("/api/duplicates").json()["groups"][0]["verified"]["state"] == "identical"
+
+
+def test_duplicates_parameters_are_validated(client):
+    assert client.get("/api/duplicates", params={"kind": "evil"}).status_code == 422
+    assert client.get("/api/duplicates", params={"limit": 9999}).status_code == 422
+    assert client.delete("/api/duplicates/verify", headers=WRITE_HEADERS).json() == {"cancelled": False}
+
+
 def test_search_validates_parameters(client, tree):
     index_and_wait(client)
     assert client.get("/api/search", params={"q": ""}).status_code == 422
