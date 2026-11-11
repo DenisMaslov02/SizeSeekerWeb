@@ -79,9 +79,13 @@ def reveal_in_explorer(path: str) -> None:
     path = os.path.normpath(path)
     if sys.platform != "win32":
         raise NotImplementedError("Explorer is only available on Windows")
+    from . import foreground
+
     # '"' is not allowed in Windows paths, so quoting cannot be broken out of.
     if os.path.isdir(path):
-        command = f'explorer "{path}"'
+        command, folder = f'explorer "{path}"', path
     else:
-        command = f'explorer /select,"{path}"'
+        command, folder = f'explorer /select,"{path}"', os.path.dirname(path)
+    before = foreground.explorer_windows()
     subprocess.Popen(command)  # noqa: S603 - fixed program, validated path
+    foreground.focus_explorer_async(before, folder)

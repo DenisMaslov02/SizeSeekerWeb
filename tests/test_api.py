@@ -194,13 +194,19 @@ def test_cancel_without_scan(client):
 
 def test_reveal_selects_files_and_opens_folders(client, tree):
     with mock.patch("sizeseekerweb.system.sys.platform", "win32"), \
-         mock.patch("sizeseekerweb.system.subprocess.Popen") as popen:
+         mock.patch("sizeseekerweb.system.subprocess.Popen") as popen, \
+         mock.patch("sizeseekerweb.foreground.explorer_windows", return_value={1: "x"}), \
+         mock.patch("sizeseekerweb.foreground.focus_explorer_async") as focus:
         r = client.post("/api/reveal", json={"path": str(tree / "a.txt")}, headers=WRITE_HEADERS)
         assert r.status_code == 200
         popen.assert_called_once_with(f'explorer /select,"{tree / "a.txt"}"')
+        # the window to bring to front is the file's folder, compared to the windows before
+        focus.assert_called_once_with({1: "x"}, str(tree))
         popen.reset_mock()
+        focus.reset_mock()
         client.post("/api/reveal", json={"path": str(tree / "docs")}, headers=WRITE_HEADERS)
         popen.assert_called_once_with(f'explorer "{tree / "docs"}"')
+        focus.assert_called_once_with({1: "x"}, str(tree / "docs"))
 
 
 def test_reveal_rejects_missing_and_relative_paths(client, tree):

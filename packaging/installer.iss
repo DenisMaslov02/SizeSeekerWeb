@@ -2,7 +2,7 @@
 ; Expects the PyInstaller output in dist\SizeSeekerWeb (run packaging\build.ps1).
 
 #ifndef AppVersion
-  #define AppVersion "1.1.1"
+  #define AppVersion "1.1.2"
 #endif
 
 [Setup]

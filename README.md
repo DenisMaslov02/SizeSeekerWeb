@@ -23,7 +23,7 @@ It is the web successor of [SizeSeeker](https://github.com/DenisMaslov02/sizesee
 - **Treemap** of the current folder – click a tile to open that folder
 - **Sort & filter** by size, name or type
 - **Largest files** in a folder and all subfolders (1 MB and up)
-- **Show in Explorer** – opens the folder or selects the file (files are never opened or executed)
+- **Show in Explorer** – opens the folder or selects the file and brings the Explorer window to the front (files are never opened or executed)
 - **German / English** UI, light and dark mode
 - **Tray icon** with "Open" and "Quit"
 
